@@ -1,5 +1,6 @@
 import json
 import re
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
@@ -12,8 +13,6 @@ DATA_DIR = APP_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 MAPPING_FILE = DATA_DIR / "mapping_master.json"
 AUDIT_FILE = DATA_DIR / "mapping_audit_trail.csv"
-OUTPUT_DIR = APP_DIR / "output"
-OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 def load_mapping_master():
@@ -198,6 +197,17 @@ def classify(df, mapping, source_name, audit_rows):
     return out
 
 
+def make_output_file(bs_mapped, pl_mapped, salary_summary_dict, rate):
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        bs_mapped.to_excel(writer, index=False, sheet_name="BS Mapped")
+        pl_mapped.to_excel(writer, index=False, sheet_name="P&L Mapped")
+        pd.DataFrame([salary_summary_dict]).to_excel(writer, index=False, sheet_name="Salary Summary")
+        pd.DataFrame([{"USD_rate": rate}]).to_excel(writer, index=False, sheet_name="Reference Rate")
+    buffer.seek(0)
+    return buffer
+
+
 def main():
     st.title("Moniepoint MIS Automation")
     mapping = load_mapping_master()
@@ -224,6 +234,8 @@ def main():
         st.subheader("USD rate")
         st.write(rate)
 
+        bs_mapped = pd.DataFrame()
+        pl_mapped = pd.DataFrame()
         if not tb_bs.empty:
             bs = ledger_amount_frame(tb_bs)
             bs_mapped = classify(bs, mapping, "BS", audit_rows)
@@ -238,6 +250,15 @@ def main():
 
         append_audit_trail(audit_rows)
         save_mapping_master(mapping)
+
+        output_file = make_output_file(bs_mapped, pl_mapped, summary, rate)
+        st.download_button(
+            label="Download output Excel",
+            data=output_file,
+            file_name="moniepoint_mis_output.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
         if audit_rows:
             st.warning(f"Unmapped ledgers found: {len(audit_rows)}")
         else:
