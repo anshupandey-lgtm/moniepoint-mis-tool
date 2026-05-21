@@ -181,41 +181,45 @@ def build_output(template_bytes, tb_bs, tb_pl, salary_df, ref_df):
     summary = salary_summary(salary_df)
     bs_mapped = classify(ledger_amount_frame(tb_bs), load_mapping_master()) if not tb_bs.empty else pd.DataFrame()
     pl_mapped = classify(ledger_amount_frame(tb_pl), load_mapping_master()) if not tb_pl.empty else pd.DataFrame()
-    for name in ["BS INR", "PL INR", "BS USD", "PL USD", "Apr 26 Reference Rates", "Apr 26 Salary Register"]:
-        if name not in wb.sheetnames:
-            continue
+
     if "Apr 26 Reference Rates" in wb.sheetnames:
         ws = wb["Apr 26 Reference Rates"]
+        start_row = next((r for r in range(1, ws.max_row + 1) if any(ws.cell(r, c).value is not None for c in range(1, min(ws.max_column, 5) + 1))), 1)
         for i, col in enumerate(ref_df.columns, start=1):
-            ws.cell(row=4, column=i).value = col
-        for r, row in enumerate(ref_df.itertuples(index=False), start=5):
+            ws.cell(row=start_row, column=i).value = col
+        for r, row in enumerate(ref_df.itertuples(index=False), start=start_row + 1):
             for c, v in enumerate(row, start=1):
                 ws.cell(row=r, column=c).value = v
+
     if "Apr 26 Salary Register" in wb.sheetnames:
         ws = wb["Apr 26 Salary Register"]
+        start_row = next((r for r in range(1, ws.max_row + 1) if any(ws.cell(r, c).value is not None for c in range(1, min(ws.max_column, 5) + 1))), 1)
         for i, col in enumerate(salary_df.columns, start=1):
-            ws.cell(row=4, column=i).value = col
-        for r, row in enumerate(salary_df.itertuples(index=False), start=5):
+            ws.cell(row=start_row, column=i).value = col
+        for r, row in enumerate(salary_df.itertuples(index=False), start=start_row + 1):
             for c, v in enumerate(row, start=1):
                 ws.cell(row=r, column=c).value = v
+
+    def fill_sheet(ws, df):
+        header_row = None
+        for r in range(1, min(ws.max_row, 30) + 1):
+            vals = [str(ws.cell(r, c).value).strip().lower() if ws.cell(r, c).value is not None else "" for c in range(1, min(ws.max_column, 10) + 1)]
+            if any(v in vals for v in ["ledger", "account", "amount"]):
+                header_row = r
+                break
+        if header_row is None:
+            header_row = 1
+        start_row = header_row + 1
+        for idx, row in df.iterrows():
+            rr = start_row + idx
+            values = [row.get("ledger", ""), row.get("amount", ""), row.get("mapping_key", ""), row.get("account_type", ""), row.get("head", ""), row.get("sub_head", ""), row.get("status", "")]
+            for c, v in enumerate(values, start=1):
+                ws.cell(row=rr, column=c).value = v
+
     if "BS INR" in wb.sheetnames and not bs_mapped.empty:
-        ws = wb["BS INR"]
-        for idx, row in bs_mapped.iterrows():
-            ws.cell(row=10 + idx, column=1).value = row["ledger"]
-            ws.cell(row=10 + idx, column=2).value = row["amount"]
-            ws.cell(row=10 + idx, column=3).value = row["mapping_key"]
-            ws.cell(row=10 + idx, column=4).value = row["account_type"]
-            ws.cell(row=10 + idx, column=5).value = row["head"]
-            ws.cell(row=10 + idx, column=6).value = row["sub_head"]
+        fill_sheet(wb["BS INR"], bs_mapped)
     if "PL INR" in wb.sheetnames and not pl_mapped.empty:
-        ws = wb["PL INR"]
-        for idx, row in pl_mapped.iterrows():
-            ws.cell(row=10 + idx, column=1).value = row["ledger"]
-            ws.cell(row=10 + idx, column=2).value = row["amount"]
-            ws.cell(row=10 + idx, column=3).value = row["mapping_key"]
-            ws.cell(row=10 + idx, column=4).value = row["account_type"]
-            ws.cell(row=10 + idx, column=5).value = row["head"]
-            ws.cell(row=10 + idx, column=6).value = row["sub_head"]
+        fill_sheet(wb["PL INR"], pl_mapped)
     if "BS USD" in wb.sheetnames and not bs_mapped.empty:
         ws = wb["BS USD"]
         for idx, row in bs_mapped.iterrows():
@@ -226,6 +230,7 @@ def build_output(template_bytes, tb_bs, tb_pl, salary_df, ref_df):
         for idx, row in pl_mapped.iterrows():
             ws.cell(row=10 + idx, column=1).value = row["ledger"]
             ws.cell(row=10 + idx, column=2).value = row["amount"] / rate if rate else row["amount"]
+
     out = BytesIO()
     wb.save(out)
     out.seek(0)
