@@ -1,8 +1,9 @@
-import json
+from pathlib import Path
+p=Path('app.py')
+new_app='''import json
 import re
 from io import BytesIO
 from pathlib import Path
-from copy import copy
 
 import pandas as pd
 import streamlit as st
@@ -14,7 +15,6 @@ APP_DIR = Path(__file__).parent
 DATA_DIR = APP_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 MAPPING_FILE = DATA_DIR / "mapping_master.json"
-TEMPLATE_FILE = APP_DIR / "Moniepoint-India-Management-report-Apr-2026.xlsx"
 
 
 def load_mapping_master():
@@ -97,12 +97,7 @@ def salary_summary(df):
     gross = n(gross_col) if gross_col else pd.Series([0]*len(df), index=df.index)
     basic = n(canon.get("BASIC SALARY", "Basic Salary"))
     da = n(canon.get("DA", "DA"))
-    return {
-        "rows": int(len(df)),
-        "gross_total": float(gross.sum()),
-        "basic_da_total": float((basic + da).sum()),
-        "pf_admin_0_5pct_basic_da": float(round(((basic + da).sum()) * 0.005, 0)),
-    }
+    return {"rows": int(len(df)), "gross_total": float(gross.sum()), "basic_da_total": float((basic + da).sum())}
 
 
 def ledger_amount_frame(df):
@@ -146,80 +141,65 @@ def classify(df, mapping):
     return out
 
 
-def safe_set(ws, r, c, value):
-    for merged in ws.merged_cells.ranges:
-        if ws.cell(r, c).coordinate in merged:
-            return
-    ws.cell(r, c).value = value
+def add_month_column_formula(ws, base_col, new_col, start_row, end_row):
+    for r in range(start_row, end_row + 1):
+        base = ws.cell(r, base_col).value
+        if isinstance(base, str) and base.startswith("="):
+            ws.cell(r, new_col).value = base.replace(chr(64 + base_col), chr(64 + new_col))
+        else:
+            ws.cell(r, new_col).value = base
 
 
-def build_output(template_bytes, tb_bs, tb_pl, salary_df, ref_df):
+def fill_working_sheet(ws, df, start_row=5, cols=(1,2,3,4,5,6,7)):
+    n = min(len(df), ws.max_row - start_row + 1)
+    for i in range(n):
+        row = df.iloc[i]
+        vals = [row.get("ledger", ""), row.get("amount", ""), row.get("mapping_key", ""), row.get("account_type", ""), row.get("head", ""), row.get("sub_head", ""), row.get("status", "")]
+        for c, v in zip(cols, vals):
+            ws.cell(start_row + i, c).value = v
+
+
+def update_template(template_bytes, tb_bs, tb_pl, salary_df, ref_df):
     wb = load_workbook(BytesIO(template_bytes))
+    mapping = load_mapping_master()
     rate = extract_rate(ref_df)
     summary = salary_summary(salary_df)
-    bs_mapped = classify(ledger_amount_frame(tb_bs), load_mapping_master()) if not tb_bs.empty else pd.DataFrame()
-    pl_mapped = classify(ledger_amount_frame(tb_pl), load_mapping_master()) if not tb_pl.empty else pd.DataFrame()
+    bs_mapped = classify(ledger_amount_frame(tb_bs), mapping) if not tb_bs.empty else pd.DataFrame()
+    pl_mapped = classify(ledger_amount_frame(tb_pl), mapping) if not tb_pl.empty else pd.DataFrame()
 
-    if "Apr 26 Reference Rates" in wb.sheetnames:
-        ws = wb["Apr 26 Reference Rates"]
-        start_row = 1
+    if "TB" in wb.sheetnames:
+        ws = wb["TB"]
+        ws["A1"] = "Updated"
+
+    if "Reference Rates" in wb.sheetnames:
+        ws = wb["Reference Rates"]
         for i, col in enumerate(ref_df.columns, start=1):
-            safe_set(ws, start_row, i, col)
-        for r, row in enumerate(ref_df.itertuples(index=False), start=start_row + 1):
+            ws.cell(1, i).value = col
+        for r, row in enumerate(ref_df.itertuples(index=False), start=2):
             for c, v in enumerate(row, start=1):
-                safe_set(ws, r, c, v)
+                ws.cell(r, c).value = v
 
-    if "Apr 26 Salary Register" in wb.sheetnames:
-        ws = wb["Apr 26 Salary Register"]
-        start_row = 1
-        for i, col in enumerate(salary_df.columns, start=1):
-            safe_set(ws, start_row, i, col)
-        for r, row in enumerate(salary_df.itertuples(index=False), start=start_row + 1):
-            for c, v in enumerate(row, start=1):
-                safe_set(ws, r, c, v)
-
-    def fill_sheet(ws, df):
-        header_row = None
-        for r in range(1, min(ws.max_row, 30) + 1):
-            vals = [str(ws.cell(r, c).value).strip().lower() if ws.cell(r, c).value is not None else "" for c in range(1, min(ws.max_column, 10) + 1)]
-            if any(v in vals for v in ["ledger", "account", "amount"]):
-                header_row = r
-                break
-        if header_row is None:
-            header_row = 1
-        start_row = header_row + 1
-        for idx, row in df.iterrows():
-            rr = start_row + idx
-            values = [row.get("ledger", ""), row.get("amount", ""), row.get("mapping_key", ""), row.get("account_type", ""), row.get("head", ""), row.get("sub_head", ""), row.get("status", "")]
-            for c, v in enumerate(values, start=1):
-                ws.cell(row=rr, column=c).value = v
+    for s in ["Apr 26 Reference Rates", "Apr 26 Salary Register"]:
+        if s in wb.sheetnames:
+            ws = wb[s]
+            ws["A1"] = ws["A1"].value
 
     if "BS INR" in wb.sheetnames and not bs_mapped.empty:
-        ws = wb["BS INR"]
-        start_row = 5
-        for idx, row in bs_mapped.head(200).iterrows():
-            rr = start_row + idx
-            vals = [row["ledger"], row["amount"], row["mapping_key"], row["account_type"], row["head"], row["sub_head"], row["status"]]
-            for c, v in enumerate(vals, start=1):
-                safe_set(ws, rr, c, v)
+        fill_working_sheet(wb["BS INR"], bs_mapped)
     if "PL INR" in wb.sheetnames and not pl_mapped.empty:
-        ws = wb["PL INR"]
-        start_row = 5
-        for idx, row in pl_mapped.head(200).iterrows():
-            rr = start_row + idx
-            vals = [row["ledger"], row["amount"], row["mapping_key"], row["account_type"], row["head"], row["sub_head"], row["status"]]
-            for c, v in enumerate(vals, start=1):
-                safe_set(ws, rr, c, v)
-    if "BS USD" in wb.sheetnames and not bs_mapped.empty:
+        fill_working_sheet(wb["PL INR"], pl_mapped)
+
+    if "BS USD" in wb.sheetnames:
         ws = wb["BS USD"]
-        for idx, row in bs_mapped.iterrows():
-            ws.cell(row=10 + idx, column=1).value = row["ledger"]
-            ws.cell(row=10 + idx, column=2).value = row["amount"] / rate if rate else row["amount"]
-    if "PL USD" in wb.sheetnames and not pl_mapped.empty:
+        if ws.max_column >= 8:
+            ws.insert_cols(8)
+            add_month_column_formula(ws, 7, 8, 3, ws.max_row)
+
+    if "PL USD" in wb.sheetnames:
         ws = wb["PL USD"]
-        for idx, row in pl_mapped.iterrows():
-            ws.cell(row=10 + idx, column=1).value = row["ledger"]
-            ws.cell(row=10 + idx, column=2).value = row["amount"] / rate if rate else row["amount"]
+        if ws.max_column >= 8:
+            ws.insert_cols(8)
+            add_month_column_formula(ws, 7, 8, 3, ws.max_row)
 
     out = BytesIO()
     wb.save(out)
@@ -237,9 +217,7 @@ def main():
         tb_bs, tb_pl = read_tb(tb_file)
         salary_df = read_salary(salary_file)
         ref_df = read_reference(ref_file)
-        template_bytes = template_file.getvalue()
-        output, summary, rate = build_output(template_bytes, tb_bs, tb_pl, salary_df, ref_df)
-        st.subheader("Summary")
+        output, summary, rate = update_template(template_file.getvalue(), tb_bs, tb_pl, salary_df, ref_df)
         st.json(summary)
         st.write("USD rate:", rate)
         st.download_button("Download extended MIS", data=output, file_name="Moniepoint_India_Management_report_extended.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -248,3 +226,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+'''
+p.write_text(new_app)
+print('new app written')
