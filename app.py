@@ -147,8 +147,9 @@ def classify(df, mapping):
 
 
 def safe_set(ws, r, c, value):
-    if hasattr(ws.cell(r, c), "merge_cell"):
-        return
+    for merged in ws.merged_cells.ranges:
+        if ws.cell(r, c).coordinate in merged:
+            return
     ws.cell(r, c).value = value
 
 
@@ -194,9 +195,21 @@ def build_output(template_bytes, tb_bs, tb_pl, salary_df, ref_df):
                 ws.cell(row=rr, column=c).value = v
 
     if "BS INR" in wb.sheetnames and not bs_mapped.empty:
-        fill_sheet(wb["BS INR"], bs_mapped)
+        ws = wb["BS INR"]
+        start_row = 5
+        for idx, row in bs_mapped.head(200).iterrows():
+            rr = start_row + idx
+            vals = [row["ledger"], row["amount"], row["mapping_key"], row["account_type"], row["head"], row["sub_head"], row["status"]]
+            for c, v in enumerate(vals, start=1):
+                safe_set(ws, rr, c, v)
     if "PL INR" in wb.sheetnames and not pl_mapped.empty:
-        fill_sheet(wb["PL INR"], pl_mapped)
+        ws = wb["PL INR"]
+        start_row = 5
+        for idx, row in pl_mapped.head(200).iterrows():
+            rr = start_row + idx
+            vals = [row["ledger"], row["amount"], row["mapping_key"], row["account_type"], row["head"], row["sub_head"], row["status"]]
+            for c, v in enumerate(vals, start=1):
+                safe_set(ws, rr, c, v)
     if "BS USD" in wb.sheetnames and not bs_mapped.empty:
         ws = wb["BS USD"]
         for idx, row in bs_mapped.iterrows():
