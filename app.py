@@ -146,33 +146,10 @@ def classify(df, mapping):
     return out
 
 
-def _copy_sheet(src, dst):
-    for row in src.iter_rows():
-        for cell in row:
-            nc = dst[cell.coordinate]
-            nc.value = cell.value
-            if cell.has_style:
-                nc._style = copy(cell._style)
-            if cell.number_format:
-                nc.number_format = cell.number_format
-            if cell.font:
-                nc.font = copy(cell.font)
-            if cell.fill:
-                nc.fill = copy(cell.fill)
-            if cell.border:
-                nc.border = copy(cell.border)
-            if cell.alignment:
-                nc.alignment = copy(cell.alignment)
-            if cell.protection:
-                nc.protection = copy(cell.protection)
-    for key, dim in src.column_dimensions.items():
-        dst.column_dimensions[key].width = dim.width
-        dst.column_dimensions[key].hidden = dim.hidden
-    for key, dim in src.row_dimensions.items():
-        dst.row_dimensions[key].height = dim.height
-        dst.row_dimensions[key].hidden = dim.hidden
-    for merged in src.merged_cells.ranges:
-        dst.merge_cells(str(merged))
+def safe_set(ws, r, c, value):
+    if hasattr(ws.cell(r, c), "merge_cell"):
+        return
+    ws.cell(r, c).value = value
 
 
 def build_output(template_bytes, tb_bs, tb_pl, salary_df, ref_df):
@@ -184,21 +161,21 @@ def build_output(template_bytes, tb_bs, tb_pl, salary_df, ref_df):
 
     if "Apr 26 Reference Rates" in wb.sheetnames:
         ws = wb["Apr 26 Reference Rates"]
-        start_row = next((r for r in range(1, ws.max_row + 1) if any(ws.cell(r, c).value is not None for c in range(1, min(ws.max_column, 5) + 1))), 1)
+        start_row = 1
         for i, col in enumerate(ref_df.columns, start=1):
-            ws.cell(row=start_row, column=i).value = col
+            safe_set(ws, start_row, i, col)
         for r, row in enumerate(ref_df.itertuples(index=False), start=start_row + 1):
             for c, v in enumerate(row, start=1):
-                ws.cell(row=r, column=c).value = v
+                safe_set(ws, r, c, v)
 
     if "Apr 26 Salary Register" in wb.sheetnames:
         ws = wb["Apr 26 Salary Register"]
-        start_row = next((r for r in range(1, ws.max_row + 1) if any(ws.cell(r, c).value is not None for c in range(1, min(ws.max_column, 5) + 1))), 1)
+        start_row = 1
         for i, col in enumerate(salary_df.columns, start=1):
-            ws.cell(row=start_row, column=i).value = col
+            safe_set(ws, start_row, i, col)
         for r, row in enumerate(salary_df.itertuples(index=False), start=start_row + 1):
             for c, v in enumerate(row, start=1):
-                ws.cell(row=r, column=c).value = v
+                safe_set(ws, r, c, v)
 
     def fill_sheet(ws, df):
         header_row = None
